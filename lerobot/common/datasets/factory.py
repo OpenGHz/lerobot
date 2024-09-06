@@ -93,14 +93,19 @@ def make_dataset(cfg, split: str = "train") -> LeRobotDataset | MultiLeRobotData
     if isinstance(cfg.dataset_repo_id, str):
         dataset = LeRobotDataset(
             cfg.dataset_repo_id,
+            cfg.dataset_root,
             split=split,
             delta_timestamps=cfg.training.get("delta_timestamps"),
             image_transforms=image_transforms,
             video_backend=cfg.video_backend,
         )
     else:
+        dataset_repo_id = cfg.dataset_repo_id
+        dataset_root = cfg.dataset_root
+        assert len(dataset_repo_id) == len(dataset_root), "The number of dataset_repo_id and dataset_root should be the same."
         dataset = MultiLeRobotDataset(
-            cfg.dataset_repo_id,
+            dataset_repo_id,
+            dataset_root,
             split=split,
             delta_timestamps=cfg.training.get("delta_timestamps"),
             image_transforms=image_transforms,

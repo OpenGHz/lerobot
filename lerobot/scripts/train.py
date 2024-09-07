@@ -647,7 +647,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     logging.info("End of training")
 
 
-@hydra.main(version_base="1.2", config_name="default", config_path="../configs")
 def train_cli(cfg: dict):
     train(
         cfg,
@@ -666,4 +665,18 @@ def train_notebook(out_dir=None, job_name=None, config_name="default", config_pa
 
 
 if __name__ == "__main__":
-    train_cli()
+
+    custom_path = "../../airbot/play/configs/test_task/"
+    default_path = "../configs"
+
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-cn", "--config-name", type=str, default="default")
+    parser.add_argument("-cp", "--config-path", type=str, default=custom_path)
+    args = parser.parse_known_args()[0]
+
+    hydra.main(
+        version_base="1.2",
+        config_name=args.config_name,
+        config_path=args.config_path,
+    )(train_cli)()

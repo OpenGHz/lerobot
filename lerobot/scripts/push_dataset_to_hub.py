@@ -47,7 +47,7 @@ import json
 import shutil
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from huggingface_hub import HfApi
@@ -155,6 +155,7 @@ def push_dataset_to_hub(
     cache_dir: Path = Path("/tmp"),
     tests_data_dir: Path | None = None,
     encoding: dict | None = None,
+    from_raw_to_lerobot_format: Callable | None = None,
 ):
     check_repo_id(repo_id)
     user_id, dataset_id = repo_id.split("/")
@@ -192,13 +193,13 @@ def push_dataset_to_hub(
         meta_data_dir = Path(cache_dir) / "meta_data"
         videos_dir = Path(cache_dir) / "videos"
 
-    if raw_format is None:
-        # TODO(rcadene, adilzouitine): implement auto_find_raw_format
-        raise NotImplementedError()
-        # raw_format = auto_find_raw_format(raw_dir)
-
     # convert dataset from original raw format to LeRobot format
-    from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
+    if from_raw_to_lerobot_format is None:
+        if raw_format is None:
+            # TODO(rcadene, adilzouitine): implement auto_find_raw_format
+            raise NotImplementedError()
+            # raw_format = auto_find_raw_format(raw_dir)
+        from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
 
     fmt_kwgs = {
         "raw_dir": raw_dir,
@@ -271,8 +272,8 @@ def push_dataset_to_hub(
 
     return lerobot_dataset
 
+def init_parser():
 
-def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -362,6 +363,10 @@ def main():
         ),
     )
 
+    return parser
+
+def main():
+    parser = init_parser()
     args = parser.parse_args()
     push_dataset_to_hub(**vars(args))
 

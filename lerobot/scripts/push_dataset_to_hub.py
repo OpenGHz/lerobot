@@ -175,7 +175,7 @@ def push_dataset_to_hub(
         # Send warning if local_dir isn't well formated
         if local_dir.parts[-2] != user_id or local_dir.parts[-1] != dataset_id:
             warnings.warn(
-                f"`local_dir` ({local_dir}) doesn't contain a community or user id `/` the name of the dataset that match the `repo_id` (e.g. 'data/lerobot/pusht'). Following this naming convention is advised, but not mandatory.",
+                f"`local_dir` ({local_dir.absolute()}) doesn't contain a community or user id `/` the name of the dataset that match the `repo_id` (e.g. 'data/lerobot/pusht'). Following this naming convention is advised, but not mandatory.",
                 stacklevel=1,
             )
 
@@ -184,7 +184,7 @@ def push_dataset_to_hub(
             if force_override:
                 shutil.rmtree(local_dir)
             elif not resume:
-                raise ValueError(f"`local_dir` already exists ({local_dir}). Use `--force-override 1`.")
+                raise ValueError(f"`local_dir` already exists ({local_dir.absolute()}). Use `--force-override 1`.")
 
         meta_data_dir = local_dir / "meta_data"
         videos_dir = local_dir / "videos"
@@ -231,7 +231,7 @@ def push_dataset_to_hub(
 
     if local_dir:
         hf_dataset = hf_dataset.with_format(None)  # to remove transforms that cant be saved
-        hf_dataset.save_to_disk(str(local_dir / "train"))
+        hf_dataset.save_to_disk(str(local_dir))
 
     if push_to_hub or local_dir:
         # mandatory for upload

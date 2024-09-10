@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - env: airbot_play_real
+  - environment: airbot_play_real
   - policy: diffusion_policy
 
 hydra:

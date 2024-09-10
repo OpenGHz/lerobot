@@ -5,27 +5,13 @@
 #       https://github.com/huggingface/lerobot/pull/134 for more details.
 
 seed: 100000
-dataset_repo_id: stack_cups
-dataset_root: airbot/play/data/
-
-# override_dataset_stats:
-#   # TODO(rcadene, alexander-soare): should we remove image stats as well? do we use a pretrained vision model?
-#   observation.image:
-#     mean: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-#     std: [[[0.5]], [[0.5]], [[0.5]]]  # (c,1,1)
-#   # TODO(rcadene, alexander-soare): we override state and action stats to use the same as the pretrained model
-#   # from the original codebase, but we should remove these and train our own pretrained model
-#   observation.state:
-#     min: [13.456424, 32.938293]
-#     max: [496.14618, 510.9579]
-#   action:
-#     min: [12.0, 25.0]
-#     max: [511.0, 511.0]
+dataset_repo_id: cup_to_bowl
+dataset_root: airbot/play/data/hfds
 
 training:
   offline_steps: 200000
   online_steps: 0
-  eval_freq: 25000
+  eval_freq: 0
   save_freq: 25000
   save_checkpoint: true
 
@@ -77,8 +63,8 @@ policy:
   # Architecture / modeling.
   # Vision backbone.
   vision_backbone: resnet18
-  crop_shape: [84, 84]
-  crop_is_random: True
+  crop_shape: null
+  crop_is_random: False
   pretrained_backbone_weights: null
   use_group_norm: True
   spatial_softmax_num_keypoints: 32
@@ -89,7 +75,7 @@ policy:
   diffusion_step_embed_dim: 128
   use_film_scale_modulation: True
   # Noise scheduler.
-  noise_scheduler_type: DDPM
+  noise_scheduler_type: DDIM
   num_train_timesteps: 100
   beta_schedule: squaredcos_cap_v2
   beta_start: 0.0001
@@ -99,7 +85,7 @@ policy:
   clip_sample_range: 1.0
 
   # Inference
-  num_inference_steps: null  # if not provided, defaults to `num_train_timesteps`
+  num_inference_steps: 16  # if not provided, defaults to `num_train_timesteps`
 
   # Loss computation
   do_mask_loss_for_padding: false

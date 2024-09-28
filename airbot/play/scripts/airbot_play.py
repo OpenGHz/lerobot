@@ -23,7 +23,7 @@ class AIRBOTPlayConfig(object):
     gravity_mode: str = "down"
     can_bus: str = "can0"
     vel: float = 2.0
-    eef_mode: str = "none"
+    eef_mode: str = "gripper"
     bigarm_type: str = "OD"
     forearm_type: str = "DM"
 
@@ -147,9 +147,12 @@ class AIRBOTPlay(object):
 
             # Send goal position to each follower
             goal_pos = goal_pos.numpy()
-            # TODO: fix position writing
-            self.follower_arms[name].set_target_joint_q(goal_pos[:-1])
-            self.follower_arms[name].set_target_end(goal_pos[-1])
+            arm_pos = goal_pos[:-1]
+            gripper_pos = goal_pos[-1]
+            self.follower_arms[name].set_target_joint_q(arm_pos)
+            self.follower_arms[name].set_target_end(gripper_pos)
+            # print(f"arm_pos: {arm_pos}, gripper_pos: {gripper_pos}")
+            # input("Press Enter to continue...")
 
         return torch.cat(action_sent)
 

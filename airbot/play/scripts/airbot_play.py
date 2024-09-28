@@ -6,6 +6,7 @@ from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
 )
+import numpy as np
 import airbot_play_py
 
 
@@ -29,6 +30,7 @@ class AIRBOTPlayConfig(object):
     joint_vel: float = 0.5
     robot_type: str | None = None
     joint_num: int = 7
+    default_action: tuple[float] = (0, -0.766, 0.704, 1.537, -0.965, -1.576, 0)
 
     cameras: dict[str, Camera] = field(default_factory=lambda: {})
 
@@ -60,6 +62,9 @@ class AIRBOTPlay(object):
         # Connect the cameras
         for name in self.cameras:
             self.cameras[name].connect()
+        goal_pos = self.config.default_action
+        self.follower_arms["main"].set_target_joint_q(goal_pos[:-1], True, 0.8, True)
+        self.follower_arms["main"].set_target_end(goal_pos[-1], True)
 
         self.is_connected = True
 
@@ -75,7 +80,11 @@ class AIRBOTPlay(object):
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
             # TODO: fix position reading
-            follower_pos[name] = self.follower_arms[name].read("Present_Position")
+            follower_pos[name] = np.array(
+                self.follower_arms[name].get_current_joint_q() + [
+                self.follower_arms[name].get_current_end()
+            ], dtype=np.float32
+            )
             follower_pos[name] = torch.from_numpy(follower_pos[name])
             self.logs[f"read_follower_{name}_pos_dt_s"] = (
                 time.perf_counter() - before_fread_t
@@ -104,8 +113,9 @@ class AIRBOTPlay(object):
         # Populate output dictionnaries and format to pytorch
         obs_dict = {}
         obs_dict["observation.state"] = state
-        for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
+        # for name in self.cameras:
+        #     obs_dict[f"observation.images.{name}"] = images[name]
+        obs_dict["observation.image"] = images[list(self.cameras.keys())[0]]
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
@@ -138,7 +148,8 @@ class AIRBOTPlay(object):
             # Send goal position to each follower
             goal_pos = goal_pos.numpy()
             # TODO: fix position writing
-            self.follower_arms[name].write("Goal_Position", goal_pos)
+            self.follower_arms[name].set_target_joint_q(goal_pos[:-1])
+            self.follower_arms[name].set_target_end(goal_pos[-1])
 
         return torch.cat(action_sent)
 

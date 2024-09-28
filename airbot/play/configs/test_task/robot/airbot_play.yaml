@@ -1,4 +1,4 @@
-_target_: lerobot.airbot.play.scripts.airbot_play.AIRBOTPlay
+_target_: airbot.play.scripts.airbot_play.AIRBOTPlay
 
 robot_type: null
 

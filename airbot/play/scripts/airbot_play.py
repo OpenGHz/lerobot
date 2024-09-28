@@ -1,32 +1,16 @@
-import airbot
-from dataclasses import dataclass, field
-import json
-import logging
-import time
-import warnings
 from dataclasses import dataclass, field, replace
-from pathlib import Path
-from typing import Sequence
-
-import numpy as np
+import time
 import torch
-
 from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.dynamixel import (
-    CalibrationMode,
-    TorqueMode,
-    convert_degrees_to_steps,
-)
-from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
 )
+import airbot_play_py
 
 
 @dataclass
-class AIRBOTPlayConfig:
+class AIRBOTPlayConfig(object):
     """
     Example of usage:
     ```python
@@ -69,7 +53,7 @@ class AIRBOTPlay(object):
             raise RobotDeviceAlreadyConnectedError(
                 "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
             )
-        self.follower_arms["main"] = airbot.create_agent(
+        self.follower_arms["main"] = airbot_play_py.create_agent(
             *tuple(self.config.__dict__.values())[:7]
         )
 

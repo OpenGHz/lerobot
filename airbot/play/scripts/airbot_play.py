@@ -162,12 +162,7 @@ class AIRBOTPlay(object):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
-        for name in self.follower_arms:
-            del self.follower_arms[name]
-
-        for name in self.leader_arms:
-            del self.leader_arms[name]
-
+        del self.follower_arms["main"]
         for name in self.cameras:
             self.cameras[name].disconnect()
 

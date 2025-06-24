@@ -53,6 +53,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
+    elif config.type == "airbot_play":
+        from .airbot.play.airbot_play import AIRBOTPlayFollower
+
+        return AIRBOTPlayFollower(config)
     else:
         raise ValueError(config.type)
 

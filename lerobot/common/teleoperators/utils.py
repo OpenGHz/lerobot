@@ -53,5 +53,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
 
         return KeyboardEndEffectorTeleop(config)
+    elif config.type == "airbot_play_leader":
+        from .airbot_leader.play_leader import AIRBOTPlayLeader
+
+        return AIRBOTPlayLeader(config)
     else:
         raise ValueError(config.type)

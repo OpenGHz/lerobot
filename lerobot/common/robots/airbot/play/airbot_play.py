@@ -11,6 +11,7 @@ import logging
 import time
 from functools import cached_property
 from typing import Any
+from dataclasses import asdict
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -29,9 +30,10 @@ class AIRBOTPlayFollower(Robot):
         super().__init__(config)
         self.config = config
         self.cameras = make_cameras_from_configs(config.cameras)
-        self.interface = AIRBOTPlay(
-            AIRBOTPlayConfig(port=config.port, use_pose=config.use_pose)
-        )
+        itf_cfg = asdict(config)
+        itf_cfg.pop("id", None)  # id is not used by the interface
+        itf_cfg.pop("calibration_dir", None)  # calibration_dir is not used
+        self.interface = AIRBOTPlay(AIRBOTPlayConfig(**itf_cfg))
         self._is_connected = False
 
     @property

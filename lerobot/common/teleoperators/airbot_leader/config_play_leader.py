@@ -24,4 +24,5 @@ from ..config import TeleoperatorConfig
 class AIRBOTPlayLeaderConfig(TeleoperatorConfig):
     port: int = 50050
     use_pose: bool = True
-    relative: bool = True
+    relative_action: bool = True
+    relative_observation: bool = True

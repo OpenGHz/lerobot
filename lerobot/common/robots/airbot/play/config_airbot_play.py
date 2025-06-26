@@ -26,3 +26,5 @@ class AIRBOTPlayFollowerConfig(RobotConfig):
     port: int = 50051
     cameras: Dict[str, CameraConfig] = field(default_factory=dict)
     use_pose: bool = True
+    relative_action: bool = True
+    relative_observation: bool = True

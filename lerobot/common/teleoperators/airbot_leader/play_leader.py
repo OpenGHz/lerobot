@@ -19,10 +19,7 @@ import time
 import numpy as np
 
 from lerobot.common.robots.airbot import AIRBOTPlayFollower, AIRBOTPlayFollowerConfig
-from airbot_data_collection.common.utils.transformations import (
-    quaternion_inverse,
-    quaternion_multiply,
-)
+from dataclasses import asdict
 
 from ..teleoperator import Teleoperator
 from .config_play_leader import AIRBOTPlayLeaderConfig
@@ -37,9 +34,10 @@ class AIRBOTPlayLeader(Teleoperator):
     def __init__(self, config: AIRBOTPlayLeaderConfig):
         super().__init__(config)
         self.config = config
-        self.interface = AIRBOTPlayFollower(
-            AIRBOTPlayFollowerConfig(port=config.port, use_pose=config.use_pose)
-        )
+        itf_config = asdict(config)
+        itf_config.pop("id", None)  # id is not used by the interface
+        itf_config.pop("calibration_dir", None)  # calibration_dir is not used
+        self.interface = AIRBOTPlayFollower(AIRBOTPlayFollowerConfig(**itf_config))
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -74,8 +72,6 @@ class AIRBOTPlayLeader(Teleoperator):
         action = self.interface.get_observation()
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
-        if self.config.relative:
-            action = self._get_rela_action(action)
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
@@ -84,14 +80,3 @@ class AIRBOTPlayLeader(Teleoperator):
 
     def disconnect(self) -> None:
         return self.interface.disconnect()
-
-    def _get_rela_action(self, action: dict[str, float]) -> dict[str, float]:
-        values = np.array(list(action.values()))
-        values[:3] = values[:3] - self._init_pose[0]
-        # quaternion multiplication to get the relative quaternion
-        values[3:7] = quaternion_multiply(
-            values[3:7], quaternion_inverse(self._init_pose[1])
-        )
-        values[7:] = values[7:] - self._init_joint
-        rela_action = dict(zip(action.keys(), values, strict=True))
-        return rela_action

@@ -16,8 +16,13 @@
 
 import logging
 import time
+import numpy as np
 
 from lerobot.common.robots.airbot import AIRBOTPlayFollower, AIRBOTPlayFollowerConfig
+from airbot_data_collection.common.utils.transformations import (
+    quaternion_inverse,
+    quaternion_multiply,
+)
 
 from ..teleoperator import Teleoperator
 from .config_play_leader import AIRBOTPlayLeaderConfig
@@ -26,14 +31,8 @@ logger = logging.getLogger(__name__)
 
 
 class AIRBOTPlayLeader(Teleoperator):
-    """
-    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow
-        expansion, developed by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
-    - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
-    """
-
     config_class = AIRBOTPlayLeaderConfig
-    name = "koch_leader"
+    name = "airbot_play_leader"
 
     def __init__(self, config: AIRBOTPlayLeaderConfig):
         super().__init__(config)
@@ -55,7 +54,10 @@ class AIRBOTPlayLeader(Teleoperator):
         return self.interface.is_connected
 
     def connect(self, calibrate: bool = True) -> None:
-        return self.interface.connect(calibrate)
+        self.interface.connect(calibrate)
+        init_state = np.array(list(self.interface.get_observation().values()))
+        self._init_pose = (init_state[:3], init_state[3:7])
+        self._init_joint = init_state[7:]
 
     @property
     def is_calibrated(self) -> bool:
@@ -72,6 +74,8 @@ class AIRBOTPlayLeader(Teleoperator):
         action = self.interface.get_observation()
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+        if self.config.relative:
+            action = self._get_rela_action(action)
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
@@ -80,3 +84,14 @@ class AIRBOTPlayLeader(Teleoperator):
 
     def disconnect(self) -> None:
         return self.interface.disconnect()
+
+    def _get_rela_action(self, action: dict[str, float]) -> dict[str, float]:
+        values = np.array(list(action.values()))
+        values[:3] = values[:3] - self._init_pose[0]
+        # quaternion multiplication to get the relative quaternion
+        values[3:7] = quaternion_multiply(
+            values[3:7], quaternion_inverse(self._init_pose[1])
+        )
+        values[7:] = values[7:] - self._init_joint
+        rela_action = dict(zip(action.keys(), values, strict=True))
+        return rela_action

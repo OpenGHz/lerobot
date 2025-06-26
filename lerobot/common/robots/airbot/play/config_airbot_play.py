@@ -17,10 +17,12 @@ from dataclasses import dataclass, field
 from lerobot.common.cameras import CameraConfig
 
 from ...config import RobotConfig
+from typing import Dict
 
 
 @RobotConfig.register_subclass("airbot_play")
 @dataclass
 class AIRBOTPlayFollowerConfig(RobotConfig):
     port: int = 50051
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    cameras: Dict[str, CameraConfig] = field(default_factory=dict)
+    use_pose: bool = True

@@ -38,7 +38,9 @@ class AIRBOTPlayLeader(Teleoperator):
     def __init__(self, config: AIRBOTPlayLeaderConfig):
         super().__init__(config)
         self.config = config
-        self.interface = AIRBOTPlayFollower(AIRBOTPlayFollowerConfig(port=config.port))
+        self.interface = AIRBOTPlayFollower(
+            AIRBOTPlayFollowerConfig(port=config.port, use_pose=config.use_pose)
+        )
 
     @property
     def action_features(self) -> dict[str, type]:

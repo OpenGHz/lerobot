@@ -29,12 +29,26 @@ class AIRBOTPlayFollower(Robot):
         super().__init__(config)
         self.config = config
         self.cameras = make_cameras_from_configs(config.cameras)
-        self.interface = AIRBOTPlay(AIRBOTPlayConfig(port=config.port))
+        self.interface = AIRBOTPlay(
+            AIRBOTPlayConfig(port=config.port, use_pose=config.use_pose)
+        )
         self._is_connected = False
 
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {f"joint{motor}.pos": float for motor in range(1, 8)}
+
+    @property
+    def _pose_ft(self) -> dict[str, type]:
+        return {
+            "position.x": float,
+            "position.y": float,
+            "position.z": float,
+            "orientation.x": float,
+            "orientation.y": float,
+            "orientation.z": float,
+            "orientation.w": float,
+        }
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -48,11 +62,17 @@ class AIRBOTPlayFollower(Robot):
         """
         Features of the observations returned by the robot.
         """
-        return {**self._motors_ft, **self._cameras_ft}
+        if self.config.use_pose:
+            return {**self._pose_ft, "joint7.pos": float, **self._cameras_ft}
+        else:
+            return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return self._motors_ft
+        if self.config.use_pose:
+            return {**self._pose_ft, "joint7.pos": float}
+        else:
+            return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
@@ -89,13 +109,22 @@ class AIRBOTPlayFollower(Robot):
         # Read arm position
         start = time.perf_counter()
         low_dim = self.interface.capture_observation()
-        obs_dict = {
-            f"joint{motor + 1}.pos": val
-            for motor, val in enumerate(
-                low_dim["arm/joint_state"]["data"]["position"]
-                + low_dim["eef/joint_state"]["data"]["position"]
-            )
-        }
+
+        if self.config.use_pose:
+            pose = low_dim["arm/pose"]["data"]
+            flt_pose = pose["position"] + pose["orientation"]
+            obs_dict = {}
+            for index, key in enumerate(self._pose_ft.keys()):
+                obs_dict[key] = flt_pose[index]
+            obs_dict["joint7.pos"] = low_dim["eef/joint_state"]["data"]["position"][0]
+        else:
+            obs_dict = {
+                f"joint{motor + 1}.pos": val
+                for motor, val in enumerate(
+                    low_dim["arm/joint_state"]["data"]["position"]
+                    + low_dim["eef/joint_state"]["data"]["position"]
+                )
+            }
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -123,7 +152,7 @@ class AIRBOTPlayFollower(Robot):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        self.interface.send_action([action[key] for key in self._motors_ft])
+        self.interface.send_action([action[key] for key in self.action_features])
         return action
 
     def disconnect(self):

@@ -23,3 +23,4 @@ from ..config import TeleoperatorConfig
 @dataclass
 class AIRBOTPlayLeaderConfig(TeleoperatorConfig):
     port: int = 50050
+    use_pose: bool = True

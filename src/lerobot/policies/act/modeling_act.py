@@ -293,7 +293,7 @@ class ACT(nn.Module):
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         super().__init__()
         self.config = config
-
+        self._cam_pos_embed_list = []
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config, is_vae_encoder=True)
             self.vae_encoder_cls_embed = nn.Embedding(1, config.dim_model)
@@ -302,6 +302,7 @@ class ACT(nn.Module):
                 self.vae_encoder_robot_state_input_proj = nn.Linear(
                     self.config.robot_state_feature.shape[0], config.dim_model
                 )
+            self._use_image_vae_input = True and config.image_features  # Set to False to ablate image input to the VAE encoder.
             # Projection layer for action (joint-space target) to hidden dimension.
             self.vae_encoder_action_input_proj = nn.Linear(
                 self.config.action_feature.shape[0],
@@ -314,10 +315,12 @@ class ACT(nn.Module):
             num_input_token_encoder = 1 + config.chunk_size
             if self.config.robot_state_feature:
                 num_input_token_encoder += 1
+            self.vae_encoder_pos_enc: Tensor
             self.register_buffer(
                 "vae_encoder_pos_enc",
                 create_sinusoidal_pos_embedding(num_input_token_encoder, config.dim_model).unsqueeze(0),
             )
+            print("vae_encoder_pos_enc shape", self.vae_encoder_pos_enc.shape)
 
         # Backbone for image feature extraction.
         if self.config.image_features:
@@ -400,6 +403,25 @@ class ACT(nn.Module):
             )
 
         batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
+        if self.config.image_features:
+            # For a list of images, the H and W may vary but H*W is constant.
+            # NOTE: If modifying this section, verify on MPS devices that
+            # gradients remain stable (no explosions or NaNs).
+            all_cam_features = []
+            all_cam_pos_embeds = []
+            for img in batch[OBS_IMAGES]:
+                cam_features = self.backbone(img)["feature_map"]
+                # print("cam_features shape", cam_features.shape)
+                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                cam_features = self.encoder_img_feat_input_proj(cam_features)
+                # print("cam_pos_embed shape", cam_pos_embed.shape)
+                # print("cam_features shape after projection", cam_features.shape)
+                cam_features = einops.rearrange(cam_features, "b c h w -> b (h w) c")
+                cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> b (h w) c")
+                # print("cam_features shape after rearrange", cam_features.shape)
+                # print("cam_pos_embed shape after rearrange", cam_pos_embed.shape)
+                all_cam_features.append(cam_features)
+                all_cam_pos_embeds.append(cam_pos_embed)
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and ACTION in batch and self.training:
@@ -411,28 +433,51 @@ class ACT(nn.Module):
                 robot_state_embed = self.vae_encoder_robot_state_input_proj(batch[OBS_STATE])
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
             action_embed = self.vae_encoder_action_input_proj(batch[ACTION])  # (B, S, D)
-
+            print("cls_embed shape", cls_embed.shape)
+            print("action_embed shape", action_embed.shape)
+            print("robot_state_embed shape", robot_state_embed.shape if self.config.robot_state_feature else "N/A")
+            vae_encoder_input = [cls_embed]
+            if self._use_image_vae_input:
+                # We can optionally include image features as input to the VAE encoder by projecting and
+                # flattening the image feature maps and concatenating them along the sequence dimension with
+                # the other tokens. This is an ablation that can be turned on or off with `_use_image_vae_input`
+                # (which is set based on whether `config.image_features` is empty or not). If you turn this on,
+                # make sure to set `config.image_features` to the list of image keys in the batch that you want
+                # to use as input to the VAE encoder.
+                for cam_features in all_cam_features:
+                    vae_encoder_input.append(cam_features)
             if self.config.robot_state_feature:
-                vae_encoder_input = [cls_embed, robot_state_embed, action_embed]  # (B, S+2, D)
-            else:
-                vae_encoder_input = [cls_embed, action_embed]
+                vae_encoder_input.append(robot_state_embed)  # (B, S+2, D)
+            vae_encoder_input.append(action_embed)
             vae_encoder_input = torch.cat(vae_encoder_input, axis=1)
+            print("vae_encoder_input shape", vae_encoder_input.shape)
 
             # Prepare fixed positional embedding.
             # Note: detach() shouldn't be necessary but leaving it the same as the original code just in case.
-            pos_embed = self.vae_encoder_pos_enc.clone().detach()  # (1, S+2, D)
+            pos_embed = self.vae_encoder_pos_enc
+            pos_embed = torch.cat(
+                [pos_embed[:, :1], *all_cam_pos_embeds, pos_embed[:, 1:]], axis=1
+            )
+            print("pos_embed shape", pos_embed.shape)
 
             # Prepare key padding mask for the transformer encoder. We have 1 or 2 extra tokens at the start of the
             # sequence depending whether we use the input states or not (cls and robot state)
             # False means not a padding token.
             cls_joint_is_pad = torch.full(
-                (batch_size, 2 if self.config.robot_state_feature else 1),
+                (batch_size, pos_embed.shape[1] - batch[ACTION].shape[1]), fill_value=
                 False,
                 device=batch[OBS_STATE].device,
             )
             key_padding_mask = torch.cat(
                 [cls_joint_is_pad, batch["action_is_pad"]], axis=1
             )  # (bs, seq+1 or 2)
+            # key_padding_mask = torch.cat(
+            #     [torch.full(
+            #         pos_embed.shape[:2], fill_value=False, device=batch[OBS_STATE].device
+            #     ), batch["action_is_pad"]], axis=1
+            # )  # (bs, seq+1 or 2)
+            print("key_padding_mask shape", key_padding_mask.shape)
+            assert tuple(key_padding_mask.shape) == (batch_size, vae_encoder_input.shape[1])
 
             # Forward pass through VAE encoder to get the latent PDF parameters.
             cls_token_out = self.vae_encoder(
@@ -441,6 +486,8 @@ class ACT(nn.Module):
                 key_padding_mask=key_padding_mask,
             )[0]  # select the class token, with shape (B, D)
             latent_pdf_params = self.vae_encoder_latent_output_proj(cls_token_out)
+            print("cls_token_out shape", cls_token_out.shape)
+            print("latent_pdf_params shape", latent_pdf_params.shape)
             mu = latent_pdf_params[:, : self.config.latent_dim]
             # This is 2log(sigma). Done this way to match the original implementation.
             log_sigma_x2 = latent_pdf_params[:, self.config.latent_dim :]
@@ -466,22 +513,18 @@ class ACT(nn.Module):
             encoder_in_tokens.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
 
         if self.config.image_features:
-            # For a list of images, the H and W may vary but H*W is constant.
-            # NOTE: If modifying this section, verify on MPS devices that
-            # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
-                cam_features = self.backbone(img)["feature_map"]
-                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
-                cam_features = self.encoder_img_feat_input_proj(cam_features)
-
+            for cam_features, cam_pos_embed in zip(all_cam_features, all_cam_pos_embeds, strict=True):
                 # Rearrange features to (sequence, batch, dim).
-                cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
-                cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
-
+                cam_features = einops.rearrange(cam_features, "b s c -> s b c")
+                cam_pos_embed = einops.rearrange(cam_pos_embed, "b s c -> s b c")
                 # Extend immediately instead of accumulating and concatenating
-                # Convert to list to extend properly
-                encoder_in_tokens.extend(list(cam_features))
-                encoder_in_pos_embed.extend(list(cam_pos_embed))
+                encoder_in_tokens.extend(cam_features)
+                encoder_in_pos_embed.extend(cam_pos_embed)
+                # print(encoder_in_tokens[-1].shape)
+                # lis = []
+                # lis.extend(cam_features)
+                # print(lis[-1].shape)
+                # exit(0)
 
         # Stack all tokens along the sequence dimension.
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
@@ -551,6 +594,7 @@ class ACTEncoderLayer(nn.Module):
         skip = x
         if self.pre_norm:
             x = self.norm1(x)
+        
         q = k = x if pos_embed is None else x + pos_embed
         x = self.self_attn(q, k, value=x, key_padding_mask=key_padding_mask)
         x = x[0]  # note: [0] to select just the output, not the attention weights

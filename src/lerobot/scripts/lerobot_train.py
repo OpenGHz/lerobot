@@ -397,6 +397,19 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        batch: dict
+        print(batch.keys())
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                print(f"{key}: {value.shape} {value.dtype} {value.device}")
+            else:
+                print(f"{key}: {value}")
+        # # print(batch)
+        # for key in ("episode_index", "frame_index", "next.done", "index", "task_index", "task"):
+        #     batch.pop(key)
+        # for key in ("action_is_pad",):
+        #     batch.pop(key, None)
+        # exit()
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 

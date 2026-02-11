@@ -1,0 +1,18 @@
+batch_size: 2
+num_workers: 1
+policy:
+  type: act
+  push_to_hub: false
+  chunk_size: 2
+  n_action_steps: 2
+  # batch_size: 2
+dataset:
+  # root: /home/ghz/.cache/huggingface/data
+  # repo_id: lerobot/aloha_static_coffee
+  root: 
+  repo_id: 
+  # streaming: true
+
+# will be loaded and used by the mcap lerobot dataset
+mcap:
+  

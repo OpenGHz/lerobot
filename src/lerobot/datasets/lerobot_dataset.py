@@ -98,7 +98,8 @@ class LeRobotDatasetMetadata:
         self.latest_episode = None
         self.metadata_buffer: list[dict] = []
         self.metadata_buffer_size = metadata_buffer_size
-
+        # if not self.root.exists():
+        #     raise FileNotFoundError(f"Dataset root path {self.root} does not exist.")
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -1083,7 +1084,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if "subtask_index" in self.features and self.meta.subtasks is not None:
             subtask_idx = item["subtask_index"].item()
             item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
-
+        # for key, value in item.items():
+        #     if isinstance(value, torch.Tensor):
+        #         print(f"{key}: {value.shape} {value.dtype} {value.device}")
+        #     else:
+        #         print(f"{key}: {value}")
         return item
 
     def __repr__(self):

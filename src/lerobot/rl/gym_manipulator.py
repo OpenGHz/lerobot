@@ -55,6 +55,7 @@ from lerobot.processor.converters import identity_transition
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
+    mujoco_env,
     so_follower,
 )
 from lerobot.robots.robot import Robot

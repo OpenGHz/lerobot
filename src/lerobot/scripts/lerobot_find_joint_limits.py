@@ -47,6 +47,7 @@ from lerobot.robots import (  # noqa: F401
     bi_openarm_follower,
     bi_so_follower,
     koch_follower,
+    mujoco_env,
     make_robot_from_config,
     omx_follower,
     openarm_follower,

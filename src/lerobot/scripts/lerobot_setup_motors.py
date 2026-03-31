@@ -33,6 +33,7 @@ from lerobot.robots import (  # noqa: F401
     bi_so_follower,
     koch_follower,
     lekiwi,
+    mujoco_env,
     make_robot_from_config,
     omx_follower,
     so_follower,

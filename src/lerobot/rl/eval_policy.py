@@ -23,6 +23,7 @@ from lerobot.policies.factory import make_policy
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
+    mujoco_env,
     so_follower,
 )
 from lerobot.teleoperators import (

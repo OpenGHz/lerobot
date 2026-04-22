@@ -23,9 +23,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download
 
-from lerobot.datasets.compute_stats import aggregate_stats
-from lerobot.datasets.feature_utils import _validate_feature_names, create_empty_dataset_info
-from lerobot.datasets.io_utils import (
+from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
+from lerobot.utils.feature_utils import _validate_feature_names
+from lerobot.utils.utils import flatten_dict
+
+from .compute_stats import aggregate_stats
+from .feature_utils import create_empty_dataset_info
+from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
     load_info,
@@ -37,18 +41,16 @@ from lerobot.datasets.io_utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.utils import (
+from .utils import (
     DEFAULT_EPISODES_PATH,
-    DEFAULT_FEATURES,
     INFO_PATH,
     check_version_compatibility,
-    flatten_dict,
     get_safe_version,
+    has_legacy_hub_download_metadata,
     is_valid_version,
     update_chunk_file_indices,
 )
-from lerobot.datasets.video_utils import get_video_info
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from .video_utils import get_video_info
 
 CODEBASE_VERSION = "v3.0"
 
@@ -77,8 +79,12 @@ class LeRobotDatasetMetadata:
 
         Args:
             repo_id: Repository identifier (e.g. ``'lerobot/aloha_sim'``).
-            root: Local directory for the dataset. Defaults to
-                ``$HF_LEROBOT_HOME/{repo_id}``.
+            root: Local directory for the dataset. When provided, Hub downloads
+                are materialized directly into this directory. When omitted,
+                existing local datasets are still looked up under
+                ``$HF_LEROBOT_HOME/{repo_id}``, but Hub downloads use a
+                revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             revision: Git revision (branch, tag, or commit hash). Defaults to
                 the current codebase version.
             force_cache_sync: If ``True``, re-download metadata from the Hub
@@ -88,7 +94,8 @@ class LeRobotDatasetMetadata:
         """
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
-        self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        self._requested_root = Path(root) if root is not None else None
+        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
         self._pq_writer = None
         self.latest_episode = None
         self._metadata_buffer: list[dict] = []
@@ -96,14 +103,15 @@ class LeRobotDatasetMetadata:
         self._finalized = False
 
         try:
-            if force_cache_sync:
+            if force_cache_sync or (
+                self._requested_root is None and has_legacy_hub_download_metadata(self.root)
+            ):
                 raise FileNotFoundError
             self._load_metadata()
         except (FileNotFoundError, NotADirectoryError):
             if is_valid_version(self.revision):
                 self.revision = get_safe_version(self.repo_id, self.revision)
 
-            (self.root / "meta").mkdir(exist_ok=True, parents=True)
             self._pull_from_repo(allow_patterns="meta/")
             self._load_metadata()
 
@@ -173,19 +181,44 @@ class LeRobotDatasetMetadata:
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
+    def ensure_readable(self) -> None:
+        """Guarantee metadata is fully loaded for read operations.
+
+        Idempotent — when metadata is already in memory this is a single
+        ``is None`` check.  Call this before transitioning from write to
+        read mode on the same instance.
+        """
+        if self.episodes is None:
+            self._load_metadata()
+
     def _pull_from_repo(
         self,
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
     ) -> None:
+        if self._requested_root is None:
+            self.root = Path(
+                snapshot_download(
+                    self.repo_id,
+                    repo_type="dataset",
+                    revision=self.revision,
+                    cache_dir=HF_LEROBOT_HUB_CACHE,
+                    allow_patterns=allow_patterns,
+                    ignore_patterns=ignore_patterns,
+                )
+            )
+            return
+
+        self._requested_root.mkdir(exist_ok=True, parents=True)
         snapshot_download(
             self.repo_id,
             repo_type="dataset",
             revision=self.revision,
-            local_dir=self.root,
+            local_dir=self._requested_root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
         )
+        self.root = self._requested_root
 
     @property
     def url_root(self) -> str:
@@ -593,7 +626,8 @@ class LeRobotDatasetMetadata:
         """
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        obj._requested_root = Path(root) if root is not None else None
+        obj.root = obj._requested_root if obj._requested_root is not None else HF_LEROBOT_HOME / repo_id
 
         obj.root.mkdir(parents=True, exist_ok=False)
 

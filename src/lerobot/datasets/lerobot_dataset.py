@@ -24,20 +24,21 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.dataset_writer import DatasetWriter
-from lerobot.datasets.utils import (
+from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
+
+from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .dataset_reader import DatasetReader
+from .dataset_writer import DatasetWriter
+from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
 )
-from lerobot.datasets.video_utils import (
+from .video_utils import (
     StreamingVideoEncoder,
     get_safe_default_codec,
     resolve_vcodec,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
+        return_uint8: bool = False,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
         streaming_encoding: bool = False,
@@ -144,15 +146,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory where the dataset will be downloaded and
-                stored. If set, all dataset files will be stored directly under this path. If not set, the
-                dataset files will be stored under $HF_LEROBOT_HOME/repo_id (configurable via the
-                HF_LEROBOT_HOME environment variable).
+            root (Path | None, optional): Local directory where the dataset will be read from or downloaded
+                into. If set, all dataset files are materialized directly under this path. If not set,
+                existing local datasets are still looked up under ``$HF_LEROBOT_HOME/{repo_id}``, but Hub
+                downloads use a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
-            image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
-                torchvision.transforms.v2 here which will be applied to visual modalities (whether they come
-                from videos or images). Defaults to None.
+            image_transforms (Callable | None, optional):
+                Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
+                conversion. This works for both image-backed and video-backed observations and can later be
+                updated with `set_image_transforms()` or cleared with `clear_image_transforms()`.
+                Defaults to None.
             delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
@@ -190,23 +195,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
-        self.image_transforms = image_transforms
+        self._requested_root = Path(root) if root else None
+        self.reader = None
+        self.set_image_transforms(image_transforms)
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_codec()
+        self._return_uint8 = return_uint8
         self._batch_encoding_size = batch_encoding_size
         self._vcodec = resolve_vcodec(vcodec)
         self._encoder_threads = encoder_threads
 
-        self.root.mkdir(exist_ok=True, parents=True)
+        if self._requested_root is not None:
+            self._requested_root.mkdir(exist_ok=True, parents=True)
 
-        # Load metadata
+        # Load metadata (sets self.root once from the resolved metadata root)
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
         )
+        self.root = self.meta.root
+        self.revision = self.meta.revision
 
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(
@@ -217,6 +227,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             video_backend=self._video_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
+            return_uint8=self._return_uint8,
         )
 
         # Load actual data
@@ -271,6 +282,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _ensure_reader(self) -> DatasetReader:
         """Lazily create the reader on first access."""
         if self.reader is None:
+            self.meta.ensure_readable()
             self.reader = DatasetReader(
                 meta=self.meta,
                 root=self.root,
@@ -279,6 +291,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video_backend=self._video_backend,
                 delta_timestamps=self.delta_timestamps,
                 image_transforms=self.image_transforms,
+                return_uint8=self._return_uint8,
             )
         return self.reader
 
@@ -471,6 +484,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"}})"
         )
 
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
+        if self.reader is not None:
+            self.reader._image_transforms = image_transforms
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform applied to visual observations."""
+        self.set_image_transforms(None)
+
     # ── Hub methods (stay on facade) ──────────────────────────────────
 
     def push_to_hub(
@@ -556,14 +581,33 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.episodes is not None:
             # Reader is guaranteed to exist here (created in __init__ before _download)
             files = self.reader.get_episodes_file_paths()
-        snapshot_download(
-            self.repo_id,
-            repo_type="dataset",
-            revision=self.revision,
-            local_dir=self.root,
-            allow_patterns=files,
-            ignore_patterns=ignore_patterns,
-        )
+
+        if self._requested_root is None:
+            self.meta.root = Path(
+                snapshot_download(
+                    self.repo_id,
+                    repo_type="dataset",
+                    revision=self.revision,
+                    cache_dir=HF_LEROBOT_HUB_CACHE,
+                    allow_patterns=files,
+                    ignore_patterns=ignore_patterns,
+                )
+            )
+        else:
+            self._requested_root.mkdir(exist_ok=True, parents=True)
+            snapshot_download(
+                self.repo_id,
+                repo_type="dataset",
+                revision=self.revision,
+                local_dir=self._requested_root,
+                allow_patterns=files,
+                ignore_patterns=ignore_patterns,
+            )
+            self.meta.root = self._requested_root
+
+        # Propagate resolved root from metadata (single source of truth)
+        self.root = self.meta.root
+        self.reader.root = self.meta.root
 
     # ── Class constructors ────────────────────────────────────────────
 
@@ -635,6 +679,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             metadata_buffer_size=metadata_buffer_size,
         )
         obj.repo_id = obj.meta.repo_id
+        obj._requested_root = obj.meta.root
         obj.root = obj.meta.root
         obj.revision = None
         obj.tolerance_s = tolerance_s
@@ -642,6 +687,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.episodes = None
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_codec()
+        obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
@@ -695,8 +741,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             repo_id: Repository identifier of the existing dataset.
-            root: Local directory of the dataset. Defaults to
-                ``$HF_LEROBOT_HOME/{repo_id}``.
+            root: Local directory of the dataset. When provided, Hub downloads
+                are materialized directly into this directory. When omitted,
+                Hub downloads use a revision-safe snapshot cache under
+                ``$HF_LEROBOT_HOME/hub``.
             tolerance_s: Timestamp synchronization tolerance in seconds.
             revision: Git revision (branch, tag, or commit hash). Defaults to
                 current codebase version tag.
@@ -716,25 +764,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Returns:
             A :class:`LeRobotDataset` in write mode, ready to append episodes.
         """
+        if not root:
+            raise ValueError(
+                "resume() requires an explicit 'root' directory because it creates a DatasetWriter. "
+                "Writing into the revision-safe Hub snapshot cache (used when root=None) would corrupt "
+                "the shared cache. Please provide a local directory path."
+            )
         vcodec = resolve_vcodec(vcodec)
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
-        obj.root.mkdir(exist_ok=True, parents=True)
+        obj._requested_root = Path(root)
         obj.revision = revision if revision else CODEBASE_VERSION
         obj.tolerance_s = tolerance_s
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.episodes = None
         obj._video_backend = video_backend if video_backend else get_safe_default_codec()
+        obj._return_uint8 = False
         obj._batch_encoding_size = batch_encoding_size
         obj._vcodec = vcodec
         obj._encoder_threads = encoder_threads
 
-        # Load metadata
+        if obj._requested_root is not None:
+            obj._requested_root.mkdir(exist_ok=True, parents=True)
+
+        # Load metadata (revision-safe when root is not provided)
         obj.meta = LeRobotDatasetMetadata(
-            obj.repo_id, obj.root, obj.revision, force_cache_sync=force_cache_sync
+            obj.repo_id, obj._requested_root, obj.revision, force_cache_sync=force_cache_sync
         )
+        obj.root = obj.meta.root
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None

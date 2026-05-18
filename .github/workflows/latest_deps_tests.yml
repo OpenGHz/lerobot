@@ -18,12 +18,8 @@
 name: Latest Dependency Tests
 
 on:
-  # Allows running this workflow manually from the Actions tab
+  # Manual trigger only (automatic CI disabled)
   workflow_dispatch:
-
-  # Runs at 03:00 UTC
-  schedule:
-    - cron: "0 3 * * *"
 
 # Sets up the environment variables
 env:
